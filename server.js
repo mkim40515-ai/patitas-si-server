@@ -26,42 +26,33 @@ if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
   console.error(
     "❌ Faltan SUPABASE_URL o SUPABASE_SECRET_KEY"
   );
-
   process.exit(1);
 }
 
-const supabase =
-  createClient(
-    SUPABASE_URL,
-    SUPABASE_SECRET_KEY
-  );
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SECRET_KEY
+);
 
-const BUCKET_FOTOS =
-  "mascotas-fotos";
+const BUCKET_FOTOS = "mascotas-fotos";
 
 // =====================================================
 // FUNCIONES AUXILIARES
 // =====================================================
 
-function enviarError(
+function responderError(
   res,
   error,
-  mensaje = "Ocurrió un error."
+  mensaje = "Ocurrió un error"
 ) {
   console.error("❌", error);
 
   return res.status(500).json({
     correcto: false,
     mensaje,
-    error:
-      error?.message ||
-      "Error desconocido."
+    error: error?.message || "Error desconocido"
   });
 }
-
-// -----------------------------------------------------
-// Escapar texto para respuestas
-// -----------------------------------------------------
 
 function textoSeguro(valor) {
   if (
@@ -71,16 +62,16 @@ function textoSeguro(valor) {
     return null;
   }
 
-  return String(valor).trim();
+  const texto = String(valor).trim();
+
+  return texto === "" ? null : texto;
 }
 
-// -----------------------------------------------------
-// Subir una imagen base64 a Supabase Storage
-// -----------------------------------------------------
+// =====================================================
+// SUBIR FOTO A SUPABASE STORAGE
+// =====================================================
 
-async function subirFotoBase64(
-  fotoBase64
-) {
+async function subirFotoBase64(fotoBase64) {
 
   if (
     !fotoBase64 ||
@@ -91,32 +82,18 @@ async function subirFotoBase64(
 
   try {
 
-    /*
-      Esperamos una imagen tipo:
-
-      data:image/jpeg;base64,/9j/4AAQ...
-
-      o:
-
-      data:image/png;base64,...
-    */
-
-    const coincidencia =
-      fotoBase64.match(
-        /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
-      );
+    const coincidencia = fotoBase64.match(
+      /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
+    );
 
     if (!coincidencia) {
       throw new Error(
-        "El formato de la imagen no es válido."
+        "El formato de la foto no es válido."
       );
     }
 
-    const mimeType =
-      coincidencia[1];
-
-    const contenidoBase64 =
-      coincidencia[2];
+    const mimeType = coincidencia[1];
+    const contenidoBase64 = coincidencia[2];
 
     const extensiones = {
       "image/jpeg": "jpg",
@@ -126,8 +103,7 @@ async function subirFotoBase64(
       "image/gif": "gif"
     };
 
-    const extension =
-      extensiones[mimeType];
+    const extension = extensiones[mimeType];
 
     if (!extension) {
       throw new Error(
@@ -135,16 +111,15 @@ async function subirFotoBase64(
       );
     }
 
-    const buffer =
-      Buffer.from(
-        contenidoBase64,
-        "base64"
-      );
+    const buffer = Buffer.from(
+      contenidoBase64,
+      "base64"
+    );
 
-    // Máximo aproximado de 8 MB
+    // Máximo 8 MB
     if (buffer.length > 8 * 1024 * 1024) {
       throw new Error(
-        "La imagen supera el límite de 8 MB."
+        "La foto supera el límite de 8 MB."
       );
     }
 
@@ -154,27 +129,29 @@ async function subirFotoBase64(
     const ruta =
       `publicaciones/${nombreArchivo}`;
 
-    const { error } =
-      await supabase.storage
-        .from(BUCKET_FOTOS)
-        .upload(
-          ruta,
-          buffer,
-          {
-            contentType: mimeType,
-            cacheControl: "3600",
-            upsert: false
-          }
-        );
+    const {
+      error
+    } = await supabase.storage
+      .from(BUCKET_FOTOS)
+      .upload(
+        ruta,
+        buffer,
+        {
+          contentType: mimeType,
+          cacheControl: "3600",
+          upsert: false
+        }
+      );
 
     if (error) {
       throw error;
     }
 
-    const { data } =
-      supabase.storage
-        .from(BUCKET_FOTOS)
-        .getPublicUrl(ruta);
+    const {
+      data
+    } = supabase.storage
+      .from(BUCKET_FOTOS)
+      .getPublicUrl(ruta);
 
     return data.publicUrl;
 
@@ -182,7 +159,7 @@ async function subirFotoBase64(
 
     console.error(
       "❌ Error al subir foto:",
-      error
+      error.message
     );
 
     throw error;
@@ -190,7 +167,114 @@ async function subirFotoBase64(
 }
 
 // =====================================================
-// SERVICIO
+// DESBLOQUEAR INSIGNIA AUTOMÁTICAMENTE
+// =====================================================
+
+async function desbloquearInsignia(
+  usuario,
+  codigo
+) {
+
+  try {
+
+    const {
+      data: insignia,
+      error: errorInsignia
+    } = await supabase
+      .from("insignias")
+      .select(
+        "id,codigo,nombre,icono,descripcion"
+      )
+      .eq(
+        "codigo",
+        codigo
+      )
+      .single();
+
+    if (
+      errorInsignia ||
+      !insignia
+    ) {
+
+      console.warn(
+        "⚠️ Insignia no encontrada:",
+        codigo
+      );
+
+      return false;
+    }
+
+    const {
+      data: existente,
+      error: errorExistente
+    } = await supabase
+      .from("insignias_usuario")
+      .select("id")
+      .eq(
+        "usuario_externo",
+        String(usuario)
+      )
+      .eq(
+        "insignia_id",
+        insignia.id
+      )
+      .maybeSingle();
+
+    if (errorExistente) {
+
+      console.warn(
+        "⚠️ No se pudo comprobar insignia:",
+        errorExistente.message
+      );
+
+      return false;
+    }
+
+    if (existente) {
+      return false;
+    }
+
+    const {
+      error: errorInsert
+    } = await supabase
+      .from("insignias_usuario")
+      .insert([{
+        usuario_externo:
+          String(usuario),
+
+        insignia_id:
+          insignia.id
+      }]);
+
+    if (errorInsert) {
+
+      console.error(
+        "❌ Error desbloqueando insignia:",
+        errorInsert.message
+      );
+
+      return false;
+    }
+
+    console.log(
+      `🏅 Nueva insignia: ${insignia.icono || "🏅"} ${insignia.nombre}`
+    );
+
+    return true;
+
+  } catch (error) {
+
+    console.error(
+      "❌ Error en desbloquearInsignia:",
+      error
+    );
+
+    return false;
+  }
+}
+
+// =====================================================
+// INICIO
 // =====================================================
 
 app.get("/", (req, res) => {
@@ -205,7 +289,7 @@ app.get("/", (req, res) => {
 });
 
 // =====================================================
-// PRUEBA SUPABASE
+// PRUEBA DE SUPABASE
 // =====================================================
 
 app.get(
@@ -230,10 +314,11 @@ app.get(
         );
 
       if (error) {
-        return enviarError(
+
+        return responderError(
           res,
           error,
-          "No se pudo consultar Supabase."
+          "No se pudo consultar Supabase"
         );
       }
 
@@ -246,18 +331,21 @@ app.get(
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error
       );
-
     }
   }
 );
 
 // =====================================================
-// MASCOTAS - LISTAR
+// MASCOTAS
 // =====================================================
+
+// -----------------------------------------------------
+// OBTENER MASCOTAS
+// -----------------------------------------------------
 
 app.get(
   "/api/mascotas",
@@ -271,16 +359,15 @@ app.get(
       const estado =
         textoSeguro(req.query.estado);
 
-      let consulta =
-        supabase
-          .from("mascotas")
-          .select("*")
-          .order(
-            "creado_en",
-            {
-              ascending: false
-            }
-          );
+      let consulta = supabase
+        .from("mascotas")
+        .select("*")
+        .order(
+          "creado_en",
+          {
+            ascending: false
+          }
+        );
 
       if (tipo) {
 
@@ -289,7 +376,6 @@ app.get(
             "tipo_publicacion",
             tipo
           );
-
       }
 
       if (estado) {
@@ -299,7 +385,6 @@ app.get(
             "estado",
             estado
           );
-
       }
 
       const {
@@ -309,12 +394,11 @@ app.get(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudieron obtener las mascotas."
+          "No se pudieron obtener las mascotas"
         );
-
       }
 
       res.json({
@@ -325,19 +409,18 @@ app.get(
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al obtener las mascotas."
+        "Error al obtener mascotas"
       );
-
     }
   }
 );
 
-// =====================================================
-// MASCOTA INDIVIDUAL
-// =====================================================
+// -----------------------------------------------------
+// OBTENER UNA MASCOTA
+// -----------------------------------------------------
 
 app.get(
   "/api/mascotas/:id",
@@ -345,8 +428,9 @@ app.get(
 
     try {
 
-      const { id } =
-        req.params;
+      const {
+        id
+      } = req.params;
 
       const {
         data,
@@ -354,17 +438,22 @@ app.get(
       } = await supabase
         .from("mascotas")
         .select("*")
-        .eq("id", id)
+        .eq(
+          "id",
+          id
+        )
         .single();
 
-      if (error || !data) {
+      if (
+        error ||
+        !data
+      ) {
 
         return res.status(404).json({
           correcto: false,
           mensaje:
-            "Mascota no encontrada."
+            "Mascota no encontrada"
         });
-
       }
 
       res.json({
@@ -374,19 +463,18 @@ app.get(
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al buscar la mascota."
+        "Error al buscar la mascota"
       );
-
     }
   }
 );
 
-// =====================================================
+// -----------------------------------------------------
 // CREAR MASCOTA
-// =====================================================
+// -----------------------------------------------------
 
 app.post(
   "/api/mascotas",
@@ -414,29 +502,28 @@ app.post(
         usuario_id
       } = req.body;
 
-      const tiposPermitidos = [
+      const tiposValidos = [
         "perdida",
         "encontrada",
         "adopcion",
         "ayuda"
       ];
 
-      // -----------------------------------------------
+      // -------------------------------------------------
       // VALIDAR TIPO
-      // -----------------------------------------------
+      // -------------------------------------------------
 
       if (!tipo_publicacion) {
 
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Debes indicar el tipo de publicación."
+            "Debes indicar el tipo de publicación"
         });
-
       }
 
       if (
-        !tiposPermitidos.includes(
+        !tiposValidos.includes(
           tipo_publicacion
         )
       ) {
@@ -444,14 +531,13 @@ app.post(
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Tipo de publicación no válido."
+            "Tipo de publicación no válido"
         });
-
       }
 
-      // -----------------------------------------------
+      // -------------------------------------------------
       // FOTO
-      // -----------------------------------------------
+      // -------------------------------------------------
 
       let fotoFinal =
         textoSeguro(foto_url);
@@ -462,12 +548,11 @@ app.post(
           await subirFotoBase64(
             foto_base64
           );
-
       }
 
-      // -----------------------------------------------
-      // DATOS
-      // -----------------------------------------------
+      // -------------------------------------------------
+      // CREAR REGISTRO
+      // -------------------------------------------------
 
       const nuevaMascota = {
 
@@ -528,15 +613,13 @@ app.post(
           fotoFinal,
 
         usuario_id:
-          textoSeguro(usuario_id),
+          textoSeguro(
+            usuario_id
+          ),
 
         estado:
           "activa"
       };
-
-      // -----------------------------------------------
-      // GUARDAR MASCOTA
-      // -----------------------------------------------
 
       const {
         data,
@@ -551,46 +634,45 @@ app.post(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudo guardar la mascota."
+          "No se pudo guardar la mascota"
         );
-
       }
 
-      // -----------------------------------------------
-      // REGISTRAR ACCIÓN
-      // -----------------------------------------------
+      // -------------------------------------------------
+      // ACCIÓN + INSIGNIAS
+      // -------------------------------------------------
 
       if (usuario_id) {
 
+        const usuario =
+          String(usuario_id);
+
+        // Registrar acción
         const {
-          error:
-            errorAccion
-        } =
-          await supabase
-            .from(
-              "acciones_usuario"
-            )
-            .insert([
-              {
-                usuario_externo:
-                  String(usuario_id),
+          error: errorAccion
+        } = await supabase
+          .from(
+            "acciones_usuario"
+          )
+          .insert([{
+            usuario_externo:
+              usuario,
 
-                accion:
-                  `publico_${tipo_publicacion}`,
+            accion:
+              `publico_${tipo_publicacion}`,
 
-                mascota_id:
-                  data.id,
+            mascota_id:
+              data.id,
 
-                datos: {
-                  tipo_publicacion,
-                  nombre:
-                    nombre || null
-                }
-              }
-            ]);
+            datos: {
+              tipo_publicacion,
+              nombre:
+                nombre || null
+            }
+          }]);
 
         if (errorAccion) {
 
@@ -598,14 +680,89 @@ app.post(
             "⚠️ La mascota se guardó, pero la acción no pudo registrarse:",
             errorAccion.message
           );
-
         }
 
+        // Contar publicaciones
+        const {
+          data: publicaciones,
+          error:
+            errorPublicaciones
+        } = await supabase
+          .from(
+            "acciones_usuario"
+          )
+          .select("id")
+          .eq(
+            "usuario_externo",
+            usuario
+          )
+          .like(
+            "accion",
+            "publico_%"
+          );
+
+        if (errorPublicaciones) {
+
+          console.warn(
+            "⚠️ No se pudieron contar publicaciones:",
+            errorPublicaciones.message
+          );
+        }
+
+        const cantidad =
+          publicaciones
+            ? publicaciones.length
+            : 0;
+
+        // Primera Huella
+        if (cantidad >= 1) {
+
+          await desbloquearInsignia(
+            usuario,
+            "primera_huella"
+          );
+        }
+
+        // Alerta Activa
+        if (
+          tipo_publicacion ===
+          "perdida"
+        ) {
+
+          await desbloquearInsignia(
+            usuario,
+            "alerta_activa"
+          );
+        }
+
+        // Rastreador
+        if (
+          tipo_publicacion ===
+          "encontrada"
+        ) {
+
+          await desbloquearInsignia(
+            usuario,
+            "rastreador"
+          );
+        }
+
+        // Hogar que Cambia Vidas
+        if (
+          tipo_publicacion ===
+          "adopcion"
+        ) {
+
+          await desbloquearInsignia(
+            usuario,
+            "hogar_cambia_vidas"
+          );
+        }
       }
 
-      // -----------------------------------------------
+      // -------------------------------------------------
       // RESPUESTA
-      // -----------------------------------------------
+      // -------------------------------------------------
 
       res.status(201).json({
 
@@ -620,18 +777,17 @@ app.post(
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al crear la publicación."
+        "Error al crear la publicación"
       );
-
     }
   }
 );
 
 // =====================================================
-// ACTUALIZAR ESTADO
+// CAMBIAR ESTADO DE MASCOTA
 // =====================================================
 
 app.patch(
@@ -640,14 +796,15 @@ app.patch(
 
     try {
 
-      const { id } =
-        req.params;
+      const {
+        id
+      } = req.params;
 
       const {
         estado
       } = req.body;
 
-      const estadosPermitidos = [
+      const estadosValidos = [
         "activa",
         "encontrada",
         "adoptada",
@@ -655,7 +812,7 @@ app.patch(
       ];
 
       if (
-        !estadosPermitidos.includes(
+        !estadosValidos.includes(
           estado
         )
       ) {
@@ -663,9 +820,8 @@ app.patch(
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Estado no válido."
+            "Estado no válido"
         });
-
       }
 
       const {
@@ -675,21 +831,24 @@ app.patch(
         .from("mascotas")
         .update({
           estado,
+
           actualizado_en:
             new Date().toISOString()
         })
-        .eq("id", id)
+        .eq(
+          "id",
+          id
+        )
         .select()
         .single();
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudo actualizar la mascota."
+          "No se pudo actualizar el estado"
         );
-
       }
 
       res.json({
@@ -701,12 +860,11 @@ app.patch(
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al actualizar el estado."
+        "Error al actualizar estado"
       );
-
     }
   }
 );
@@ -714,6 +872,10 @@ app.patch(
 // =====================================================
 // ACCIONES
 // =====================================================
+
+// -----------------------------------------------------
+// REGISTRAR ACCIÓN
+// -----------------------------------------------------
 
 app.post(
   "/api/acciones",
@@ -736,9 +898,8 @@ app.post(
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Faltan datos de la acción."
+            "Faltan usuario_externo o accion"
         });
-
       }
 
       const {
@@ -748,61 +909,53 @@ app.post(
         .from(
           "acciones_usuario"
         )
-        .insert([
-          {
-            usuario_externo:
-              String(
-                usuario_externo
-              ),
+        .insert([{
+          usuario_externo:
+            String(
+              usuario_externo
+            ),
 
-            accion,
+          accion,
 
-            mascota_id:
-              mascota_id || null,
+          mascota_id:
+            mascota_id || null,
 
-            datos:
-              datos || {}
-          }
-        ])
+          datos:
+            datos || {}
+        }])
         .select()
         .single();
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudo registrar la acción."
+          "No se pudo registrar la acción"
         );
-
       }
 
       res.status(201).json({
-
         correcto: true,
-
         mensaje:
           "Acción registrada ✅",
-
         accion: data
-
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al registrar la acción."
+        "Error al registrar acción"
       );
-
     }
   }
 );
 
-// =====================================================
+// -----------------------------------------------------
 // OBTENER ACCIONES
-// =====================================================
+// -----------------------------------------------------
 
 app.get(
   "/api/acciones/:usuario",
@@ -836,41 +989,39 @@ app.get(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudieron obtener las acciones."
+          "No se pudieron obtener las acciones"
         );
-
       }
 
       res.json({
-
         correcto: true,
-
         total:
           data.length,
-
         acciones:
           data
-
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al obtener acciones."
+        "Error al obtener acciones"
       );
-
     }
   }
 );
 
 // =====================================================
-// INSIGNIAS - TODAS
+// INSIGNIAS
 // =====================================================
+
+// -----------------------------------------------------
+// TODAS
+// -----------------------------------------------------
 
 app.get(
   "/api/insignias",
@@ -882,7 +1033,9 @@ app.get(
         data,
         error
       } = await supabase
-        .from("insignias")
+        .from(
+          "insignias"
+        )
         .select("*")
         .order(
           "created_at",
@@ -893,34 +1046,33 @@ app.get(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudieron obtener las insignias."
+          "No se pudieron obtener las insignias"
         );
-
       }
 
       res.json({
         correcto: true,
-        insignias: data
+        insignias:
+          data
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al obtener insignias."
+        "Error al obtener insignias"
       );
-
     }
   }
 );
 
-// =====================================================
-// INSIGNIAS DE USUARIO
-// =====================================================
+// -----------------------------------------------------
+// INSIGNIAS DEL USUARIO
+// -----------------------------------------------------
 
 app.get(
   "/api/insignias/usuario/:usuario",
@@ -965,35 +1117,34 @@ app.get(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudieron obtener las insignias."
+          "No se pudieron obtener las insignias del usuario"
         );
-
       }
 
       res.json({
         correcto: true,
         usuario,
-        insignias: data
+        insignias:
+          data
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al obtener insignias."
+        "Error al obtener insignias del usuario"
       );
-
     }
   }
 );
 
-// =====================================================
-// DESBLOQUEAR INSIGNIA
-// =====================================================
+// -----------------------------------------------------
+// DESBLOQUEAR MANUALMENTE
+// -----------------------------------------------------
 
 app.post(
   "/api/insignias/desbloquear",
@@ -1014,18 +1165,20 @@ app.post(
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Faltan datos para desbloquear la insignia."
+            "Faltan datos para desbloquear la insignia"
         });
-
       }
 
       const {
         data: insignia,
-        error:
-          errorInsignia
+        error: errorInsignia
       } = await supabase
-        .from("insignias")
-        .select("*")
+        .from(
+          "insignias"
+        )
+        .select(
+          "id,codigo,nombre,icono,descripcion"
+        )
         .eq(
           "codigo",
           codigo_insignia
@@ -1040,9 +1193,8 @@ app.post(
         return res.status(404).json({
           correcto: false,
           mensaje:
-            "Insignia no encontrada."
+            "Insignia no encontrada"
         });
-
       }
 
       const {
@@ -1052,24 +1204,23 @@ app.post(
         .from(
           "insignias_usuario"
         )
-        .insert([
-          {
-            usuario_externo:
-              String(
-                usuario_externo
-              ),
+        .insert([{
+          usuario_externo:
+            String(
+              usuario_externo
+            ),
 
-            insignia_id:
-              insignia.id
-          }
-        ])
+          insignia_id:
+            insignia.id
+        }])
         .select()
         .single();
 
       if (error) {
 
         if (
-          error.code === "23505"
+          error.code ===
+          "23505"
         ) {
 
           return res.json({
@@ -1078,15 +1229,13 @@ app.post(
             mensaje:
               "La insignia ya estaba desbloqueada ✅"
           });
-
         }
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudo desbloquear la insignia."
+          "No se pudo desbloquear la insignia"
         );
-
       }
 
       res.status(201).json({
@@ -1096,7 +1245,7 @@ app.post(
         nueva: true,
 
         mensaje:
-          `¡Nueva insignia desbloqueada! ${insignia.icono}`,
+          `¡Nueva insignia desbloqueada! ${insignia.icono || "🏅"}`,
 
         insignia: data
 
@@ -1104,19 +1253,22 @@ app.post(
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al desbloquear insignia."
+        "Error al desbloquear insignia"
       );
-
     }
   }
 );
 
 // =====================================================
-// RECOMPENSAS - TODAS
+// RECOMPENSAS
 // =====================================================
+
+// -----------------------------------------------------
+// TODAS
+// -----------------------------------------------------
 
 app.get(
   "/api/recompensas",
@@ -1128,7 +1280,9 @@ app.get(
         data,
         error
       } = await supabase
-        .from("recompensas")
+        .from(
+          "recompensas"
+        )
         .select("*")
         .order(
           "created_at",
@@ -1139,34 +1293,33 @@ app.get(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudieron obtener las recompensas."
+          "No se pudieron obtener las recompensas"
         );
-
       }
 
       res.json({
         correcto: true,
-        recompensas: data
+        recompensas:
+          data
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al obtener recompensas."
+        "Error al obtener recompensas"
       );
-
     }
   }
 );
 
-// =====================================================
+// -----------------------------------------------------
 // RECOMPENSAS DEL USUARIO
-// =====================================================
+// -----------------------------------------------------
 
 app.get(
   "/api/recompensas/usuario/:usuario",
@@ -1212,35 +1365,34 @@ app.get(
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudieron obtener las recompensas."
+          "No se pudieron obtener las recompensas"
         );
-
       }
 
       res.json({
         correcto: true,
         usuario,
-        recompensas: data
+        recompensas:
+          data
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al obtener recompensas."
+        "Error al obtener recompensas"
       );
-
     }
   }
 );
 
-// =====================================================
+// -----------------------------------------------------
 // ASIGNAR RECOMPENSA
-// =====================================================
+// -----------------------------------------------------
 
 app.post(
   "/api/recompensas/asignar",
@@ -1261,18 +1413,20 @@ app.post(
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Faltan datos para asignar la recompensa."
+            "Faltan datos para asignar la recompensa"
         });
-
       }
 
       const {
         data: recompensa,
-        error:
-          errorRecompensa
+        error: errorRecompensa
       } = await supabase
-        .from("recompensas")
-        .select("*")
+        .from(
+          "recompensas"
+        )
+        .select(
+          "id,codigo,nombre,icono,descripcion"
+        )
         .eq(
           "codigo",
           codigo_recompensa
@@ -1287,9 +1441,8 @@ app.post(
         return res.status(404).json({
           correcto: false,
           mensaje:
-            "Recompensa no encontrada."
+            "Recompensa no encontrada"
         });
-
       }
 
       const {
@@ -1299,31 +1452,28 @@ app.post(
         .from(
           "recompensas_usuario"
         )
-        .insert([
-          {
-            usuario_externo:
-              String(
-                usuario_externo
-              ),
+        .insert([{
+          usuario_externo:
+            String(
+              usuario_externo
+            ),
 
-            recompensa_id:
-              recompensa.id,
+          recompensa_id:
+            recompensa.id,
 
-            estado:
-              "pendiente"
-          }
-        ])
+          estado:
+            "pendiente"
+        }])
         .select()
         .single();
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudo asignar la recompensa."
+          "No se pudo asignar la recompensa"
         );
-
       }
 
       res.status(201).json({
@@ -1331,27 +1481,27 @@ app.post(
         correcto: true,
 
         mensaje:
-          `¡Recompensa disponible! ${recompensa.icono}`,
+          `¡Recompensa disponible! ${recompensa.icono || "🎁"}`,
 
-        recompensa: data
+        recompensa:
+          data
 
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al asignar recompensa."
+        "Error al asignar recompensa"
       );
-
     }
   }
 );
 
-// =====================================================
+// -----------------------------------------------------
 // CAMBIAR ESTADO DE RECOMPENSA
-// =====================================================
+// -----------------------------------------------------
 
 app.patch(
   "/api/recompensas/:id/estado",
@@ -1359,13 +1509,15 @@ app.patch(
 
     try {
 
-      const { id } =
-        req.params;
+      const {
+        id
+      } = req.params;
 
-      const { estado } =
-        req.body;
+      const {
+        estado
+      } = req.body;
 
-      const estadosPermitidos = [
+      const estadosValidos = [
         "pendiente",
         "aprobada",
         "entregada",
@@ -1373,7 +1525,7 @@ app.patch(
       ];
 
       if (
-        !estadosPermitidos.includes(
+        !estadosValidos.includes(
           estado
         )
       ) {
@@ -1381,9 +1533,8 @@ app.patch(
         return res.status(400).json({
           correcto: false,
           mensaje:
-            "Estado de recompensa no válido."
+            "Estado de recompensa no válido"
         });
-
       }
 
       const {
@@ -1396,58 +1547,52 @@ app.patch(
         .update({
           estado
         })
-        .eq("id", id)
+        .eq(
+          "id",
+          id
+        )
         .select()
         .single();
 
       if (error) {
 
-        return enviarError(
+        return responderError(
           res,
           error,
-          "No se pudo actualizar la recompensa."
+          "No se pudo actualizar la recompensa"
         );
-
       }
 
       res.json({
-
         correcto: true,
-
         mensaje:
           "Recompensa actualizada ✅",
-
         recompensa:
           data
-
       });
 
     } catch (error) {
 
-      return enviarError(
+      return responderError(
         res,
         error,
-        "Error al actualizar recompensa."
+        "Error al actualizar recompensa"
       );
-
     }
   }
 );
 
 // =====================================================
-// 404
+// RUTA NO ENCONTRADA
 // =====================================================
 
 app.use(
   (req, res) => {
 
     res.status(404).json({
-
       correcto: false,
-
       mensaje:
-        "Ruta no encontrada."
-
+        "Ruta no encontrada"
     });
 
   }
