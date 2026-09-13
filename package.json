@@ -2,5 +2,12 @@
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1"
+  },
+  "name": "patitas-si-server",
+  "version": "1.0.0",
+  "description": "Servidor de Patitas S.I.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
   }
 }
